@@ -5,9 +5,10 @@
   'use strict';
 
   const DIFFICULTY = {
-    easy:   { snippet: 15, startMin: 0.08, startMax: 0.15, answerTime: 30 },
-    normal: { snippet: 10, startMin: 0.10, startMax: 0.50, answerTime: 25 },
-    hard:   { snippet: 5,  startMin: 0.10, startMax: 0.75, answerTime: 20 },
+    // hotIndex 對應 songs.js 中 hot 陣列：[5 秒, 10 秒, 15 秒]
+    easy:   { snippet: 15, hotIndex: 2, startMin: 0.08, startMax: 0.15, answerTime: 30 },
+    normal: { snippet: 10, hotIndex: 1, startMin: 0.10, startMax: 0.50, answerTime: 25 },
+    hard:   { snippet: 5,  hotIndex: 0, startMin: 0.10, startMax: 0.75, answerTime: 20 },
   };
   const LOAD_TIMEOUT_MS = 12000;
   const BEST_KEY = 'hollywood-guess-best';
@@ -195,9 +196,14 @@
       if (state === YT.PlayerState.PLAYING) {
         // 影片開始了（靜音），決定片段起點後跳過去
         const dur = player.getDuration() || 0;
-        const { snippet, startMin, startMax } = game.cfg;
+        const { snippet, startMin, startMax, hotIndex } = game.cfg;
+        const hot = round.song.hot && round.song.hot[hotIndex];
         let start = 0;
-        if (dur > snippet + 6) {
+        if (typeof hot === 'number') {
+          // 使用 YouTube「重播次數最多」熱度最高的段落
+          start = dur ? clamp(hot, 0, Math.max(0, dur - snippet - 1)) : hot;
+        } else if (dur > snippet + 6) {
+          // 沒有熱度資料的影片：退回隨機段落
           start = rand(dur * startMin, dur * startMax);
           start = clamp(start, 3, dur - snippet - 3);
         }
