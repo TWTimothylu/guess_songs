@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>好萊塢配樂猜猜看</title>
+  <meta name="description" content="聽好萊塢電影配樂片段，猜出是哪部電影！音樂來源：YouTube。">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="spotlight" aria-hidden="true"></div>
+
+  <main class="app">
+    <!-- ===== 開始畫面 ===== -->
+    <section id="screen-start" class="screen active">
+      <p class="eyebrow">NOW SHOWING</p>
+      <h1 class="title">好萊塢配樂<br><span>猜猜看</span></h1>
+      <p class="subtitle">聽一段電影配樂，猜出是哪一部電影。</p>
+
+      <div class="settings">
+        <fieldset>
+          <legend>難度</legend>
+          <div class="seg" data-setting="difficulty">
+            <button type="button" data-value="easy">簡單<small>15 秒</small></button>
+            <button type="button" data-value="normal" class="on">普通<small>10 秒</small></button>
+            <button type="button" data-value="hard">困難<small>5 秒・隨機段落</small></button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>題數</legend>
+          <div class="seg" data-setting="rounds">
+            <button type="button" data-value="5">5 題</button>
+            <button type="button" data-value="10" class="on">10 題</button>
+            <button type="button" data-value="20">20 題</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>題庫</legend>
+          <div class="seg" data-setting="pool">
+            <button type="button" data-value="all" class="on">全部</button>
+            <button type="button" data-value="score">純配樂</button>
+            <button type="button" data-value="song">主題曲</button>
+          </div>
+        </fieldset>
+      </div>
+
+      <button id="btn-start" class="btn-primary" type="button" disabled>載入中…</button>
+      <p class="best" id="best-score"></p>
+    </section>
+
+    <!-- ===== 遊戲畫面 ===== -->
+    <section id="screen-game" class="screen">
+      <header class="hud">
+        <div><span class="label">題目</span><strong id="hud-round">1 / 10</strong></div>
+        <div><span class="label">連擊</span><strong id="hud-streak">0</strong></div>
+        <div><span class="label">分數</span><strong id="hud-score">0</strong></div>
+      </header>
+
+      <div class="stage">
+        <div class="player-wrap">
+          <div id="yt-player"></div>
+          <div class="cover" id="cover">
+            <div class="vinyl" id="vinyl"><div class="label-disc" id="label-disc">?</div></div>
+            <p class="cover-status" id="cover-status">準備中…</p>
+            <div class="snippet-bar"><div id="snippet-fill"></div></div>
+          </div>
+        </div>
+        <div class="timer"><div id="timer-fill"></div></div>
+      </div>
+
+      <div class="question">
+        <h2>這是哪一部電影的音樂？</h2>
+        <button id="btn-replay" class="btn-ghost" type="button" disabled>🔁 再聽一次</button>
+      </div>
+
+      <div class="options" id="options"></div>
+
+      <div class="reveal" id="reveal" hidden>
+        <p class="verdict" id="verdict"></p>
+        <h3 id="reveal-title"></h3>
+        <p id="reveal-meta"></p>
+        <p><a id="reveal-yt" class="yt-link" target="_blank" rel="noopener">在 YouTube 觀看 ↗</a></p>
+        <button id="btn-next" class="btn-primary" type="button">下一題 →</button>
+      </div>
+    </section>
+
+    <!-- ===== 結算畫面 ===== -->
+    <section id="screen-end" class="screen">
+      <p class="eyebrow">THE END</p>
+      <h1 class="title small">片尾名單</h1>
+      <div class="final">
+        <div><span class="label">總分</span><strong id="final-score">0</strong></div>
+        <div><span class="label">答對</span><strong id="final-correct">0 / 0</strong></div>
+        <div><span class="label">最長連擊</span><strong id="final-streak">0</strong></div>
+      </div>
+      <p class="rank" id="final-rank"></p>
+      <ol class="credits" id="credits"></ol>
+      <button id="btn-again" class="btn-primary" type="button">再玩一次</button>
+    </section>
+  </main>
+
+  <footer class="foot">音樂與影片來源：YouTube。所有配樂版權屬原權利人所有，本遊戲僅供娛樂。</footer>
+
+  <script src="songs.js"></script>
+  <script src="game.js"></script>
+  <script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
