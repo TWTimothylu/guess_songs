@@ -112,7 +112,6 @@ legend { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
   border-radius: var(--radius); overflow: hidden; background: #000;
   border: 1px solid var(--line);
 }
-.player-wrap iframe, #yt-player { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 .cover {
   position: absolute; inset: 0; z-index: 2;
@@ -263,3 +262,28 @@ legend { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
   .option { min-height: 0; }
   .question h2 { font-size: 16px; }
 }
+
+/* ===== 載入失敗時的手動播放按鈕 ===== */
+.btn-unstick {
+  font: inherit; font-size: 14px; font-weight: 700; color: #1d1404; cursor: pointer;
+  padding: 8px 18px; border: 0; border-radius: 999px;
+  background: linear-gradient(180deg, var(--gold-2), var(--gold));
+  box-shadow: 0 4px 16px rgba(230, 180, 76, .35);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse { 50% { transform: scale(1.06); } }
+
+/* ===== 診斷面板 ===== */
+.debug-card { max-width: 640px; text-align: left; }
+.debug-card .hint { text-align: left; margin: 0 0 10px; }
+.debug-card h4 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.debug-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.debug-actions .btn-secondary { flex: 1 1 150px; padding: 10px; font-size: 14px; }
+.debug-actions .btn-secondary:disabled { opacity: .4; cursor: default; }
+.debug-pre {
+  margin: 0; padding: 10px; border-radius: 8px; background: rgba(0, 0, 0, .35); border: 1px solid var(--line);
+  font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--text);
+  white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto;
+}
+.debug-log { max-height: 240px; }
+.links { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }

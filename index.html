@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>好萊塢配樂猜猜看</title>
-  <meta name="description" content="聽好萊塢電影配樂片段，猜出是哪部電影！音樂來源：YouTube。">
+  <meta name="description" content="聽一段好萊塢電影配樂，猜出是哪一部電影！音樂來源：Apple Music 官方試聽。">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet">
@@ -67,10 +67,10 @@
 
       <div class="stage">
         <div class="player-wrap">
-          <div id="yt-player"></div>
           <div class="cover" id="cover">
             <div class="vinyl" id="vinyl"><div class="label-disc" id="label-disc">?</div></div>
             <p class="cover-status" id="cover-status">準備中…</p>
+            <button class="btn-unstick" id="btn-unstick" type="button" hidden>▶ 點我播放</button>
             <div class="snippet-bar"><div id="snippet-fill"></div></div>
           </div>
         </div>
@@ -88,7 +88,7 @@
         <p class="verdict" id="verdict"></p>
         <h3 id="reveal-title"></h3>
         <p id="reveal-meta"></p>
-        <p><a id="reveal-yt" class="yt-link" target="_blank" rel="noopener">在 YouTube 觀看 ↗</a></p>
+        <p class="links"><a id="reveal-apple" class="yt-link" target="_blank" rel="noopener">在 Apple Music 收聽完整版 ↗</a><a id="reveal-yt" class="yt-link" target="_blank" rel="noopener">YouTube ↗</a></p>
         <button id="btn-next" class="btn-primary" type="button">下一題 →</button>
       </div>
     </section>
@@ -137,12 +137,35 @@
     </div>
   </div>
 
-  <footer class="foot">音樂與影片來源：YouTube。所有配樂版權屬原權利人所有，本遊戲僅供娛樂。</footer>
+  <!-- ===== 診斷面板 ===== -->
+  <div class="modal" id="debug-modal" hidden>
+    <div class="modal-card debug-card" role="dialog" aria-modal="true" aria-labelledby="debug-title">
+      <button class="modal-close" id="btn-close-debug" type="button" aria-label="關閉">✕</button>
+      <h3 id="debug-title">🐞 播放診斷</h3>
+      <p class="hint">音樂載不出來時，可以先試「重新載入這首」或「跳過這首」。仍有問題的話，按「複製診斷資訊」貼給開發者。</p>
+      <div class="debug-actions">
+        <button id="btn-debug-retry" class="btn-secondary" type="button">🔄 重新載入這首</button>
+        <button id="btn-debug-skip" class="btn-secondary" type="button">⏭ 跳過這首</button>
+        <button id="btn-debug-copy" class="btn-secondary" type="button">📋 複製診斷資訊</button>
+      </div>
+      <p class="hint" id="debug-msg" aria-live="polite"></p>
+      <h4>目前狀態</h4>
+      <pre class="debug-pre" id="debug-info"></pre>
+      <h4>失敗過的影片 <button id="btn-debug-clear" class="btn-link" type="button">清除</button></h4>
+      <pre class="debug-pre" id="debug-failed"></pre>
+      <h4>事件記錄（最新在上）</h4>
+      <pre class="debug-pre debug-log" id="debug-log"></pre>
+    </div>
+  </div>
+
+  <footer class="foot">
+    音樂試聽由 Apple Music 提供。所有配樂與歌曲版權屬原權利人所有，本遊戲僅供娛樂。<br>
+    <button id="btn-debug" class="btn-link" type="button">🐞 播放有問題？</button>
+  </footer>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
   <script src="songs.js"></script>
   <script src="share.js"></script>
   <script src="game.js"></script>
-  <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>

@@ -1,26 +1,56 @@
 /* 好萊塢配樂猜猜看 — 遊戲邏輯
- * 音樂透過 YouTube IFrame Player API 播放；作答期間影片被封面遮住，揭曉時才顯示。
+ * 音樂來源：Apple Music（iTunes Search API）官方 30 秒試聽，用網頁內建 <audio> 播放。
+ * 不經過 YouTube 播放器，所以沒有廣告，手機鎖定畫面也不會顯示歌名。
  */
 (() => {
   'use strict';
 
   const DIFFICULTY = {
-    // hotIndex 對應 songs.js 中 hot 陣列：[5 秒, 10 秒, 15 秒]
-    easy:   { snippet: 15, hotIndex: 2, startMin: 0.08, startMax: 0.15, answerTime: 30 },
-    normal: { snippet: 10, hotIndex: 1, startMin: 0.10, startMax: 0.50, answerTime: 25 },
-    hard:   { snippet: 5,  hotIndex: 0, startMin: 0.10, startMax: 0.75, answerTime: 20 },
+    easy:   { snippet: 15, answerTime: 30 },
+    normal: { snippet: 10, answerTime: 25 },
+    hard:   { snippet: 5,  answerTime: 20 },
   };
   const DIFF_LABEL = { easy: '簡單', normal: '普通', hard: '困難' };
-  const LOAD_TIMEOUT_MS = 12000;
+  const PREVIEW_LEN = 30;        // Apple 試聽長度（秒），實際長度載入後再修正
+  const EDGE_IN = 1;             // 試聽開頭的淡入，避開
+  const EDGE_OUT = 2.5;          // 試聽結尾的淡出，避開
+  const NUDGE_MS = 3000;         // 載入幾毫秒還沒播 → 自動再按一次播放
+  const HELP_MS = 5000;          // 載入幾毫秒還沒播 → 顯示「點我播放」
+  const LOAD_TIMEOUT_MS = 12000; // 載入逾時 → 重新載入或換歌
+  const MAX_ATTEMPTS = 2;        // 每首歌最多載入幾次（第 2 次會先向 Apple 重新取得試聽網址）
+  const STALL_MS = 1500;         // 作答中進度停住多久算卡住
+  const STALL_HELP_MS = 3000;    // 卡住多久後顯示「點我播放」
   const BEST_KEY = 'hollywood-guess-best';
   const NAME_KEY = 'hollywood-guess-name';
+  const FAIL_KEY = 'hollywood-guess-failed';
   const GAME_TITLE = '好萊塢配樂猜猜看';
+  const TYPE_LABEL = { score: '配樂', song: '主題曲' };
+  const MEDIA_ERROR = { 1: '載入被中止', 2: '網路錯誤', 3: '音檔解碼失敗', 4: '音檔無法使用（網址失效或格式不支援）' };
+  const songLabel = (s) => `《${s.zh}》${s.track}（Apple ${s.appleId}）`;
+
+  /* ---------- 除錯記錄 ----------
+   * 載入、播放、錯誤都記在記憶體裡（最多 300 筆），
+   * 點頁尾「🐞 播放有問題？」或網址加 ?debug 即可查看並複製給開發者。
+   */
+  let debugOpen = false;
+  const dbg = {
+    t0: performance.now(),
+    entries: [],
+    add(level, msg) {
+      const sec = ((performance.now() - this.t0) / 1000).toFixed(1);
+      this.entries.push({ sec, level, msg });
+      if (this.entries.length > 300) this.entries.shift();
+      if (level === 'error' || level === 'warn') console[level](`[猜歌] ${msg}`);
+      if (debugOpen) renderDebug();
+    },
+  };
 
   const $ = (id) => document.getElementById(id);
   const els = {
     start: $('btn-start'), best: $('best-score'),
     round: $('hud-round'), streak: $('hud-streak'), score: $('hud-score'),
-    vinyl: $('vinyl'), labelDisc: $('label-disc'), status: $('cover-status'), ytLink: $('reveal-yt'),
+    vinyl: $('vinyl'), labelDisc: $('label-disc'), status: $('cover-status'),
+    appleLink: $('reveal-apple'), ytLink: $('reveal-yt'),
     snippetFill: $('snippet-fill'), timerFill: $('timer-fill'),
     replay: $('btn-replay'), options: $('options'),
     reveal: $('reveal'), verdict: $('verdict'), revealTitle: $('reveal-title'), revealMeta: $('reveal-meta'),
@@ -33,14 +63,26 @@
     inviteMsg: $('invite-msg'), inviteLink: $('invite-link'),
     modal: $('share-modal'), closeShare: $('btn-close-share'), shareImg: $('share-img'),
     shareIg: $('btn-share-ig'), download: $('btn-download'), shareHint: $('share-hint'),
+    unstick: $('btn-unstick'),
+    debugOpen: $('btn-debug'), debugModal: $('debug-modal'), debugClose: $('btn-close-debug'),
+    debugInfo: $('debug-info'), debugLog: $('debug-log'), debugFailed: $('debug-failed'),
+    debugCopy: $('btn-debug-copy'), debugRetry: $('btn-debug-retry'), debugSkip: $('btn-debug-skip'),
+    debugClear: $('btn-debug-clear'), debugMsg: $('debug-msg'),
   };
 
   const settings = { difficulty: 'normal', rounds: 10, pool: 'all' };
-  let player = null;
-  let playerReady = false;
   let game = null;   // 本局狀態
   let round = null;  // 本題狀態
   let ticker = null;
+
+  // 同一個 <audio> 元素整局重複使用：第一次在點擊中播放後，手機瀏覽器就允許它之後自動播放
+  const audio = new Audio();
+  audio.preload = 'auto';
+  audio.setAttribute('playsinline', '');
+  // 預先下載下一題，切題時幾乎不用等
+  const preloader = new Audio();
+  preloader.preload = 'auto';
+  preloader.muted = true;
 
   /* ---------- 工具 ---------- */
   const shuffle = (arr) => {
@@ -106,7 +148,7 @@
   let challenge = parseChallenge();
 
   function startLabel() {
-    if (!playerReady) return;
+    els.start.disabled = false;
     els.start.textContent = challenge ? '接受挑戰' : '開始遊戲';
   }
 
@@ -154,40 +196,181 @@
   renderChallenge();
   els.name.value = storage.get(NAME_KEY) || '';
 
-  /* ---------- YouTube 播放器 ---------- */
-  window.onYouTubeIframeAPIReady = () => {
-    player = new YT.Player('yt-player', {
-      width: '100%', height: '100%',
-      playerVars: { controls: 0, disablekb: 1, playsinline: 1, rel: 0, iv_load_policy: 3, fs: 0, cc_load_policy: 0 },
-      events: {
-        onReady: () => {
-          playerReady = true;
-          // 影片永遠藏在封面下，也不讓鍵盤 Tab 進去
-          const iframe = player.getIframe();
-          iframe.tabIndex = -1;
-          iframe.setAttribute('aria-hidden', 'true');
-          els.start.disabled = false;
-          startLabel();
-        },
-        onError: onPlayerError,
-      },
-    });
-  };
-  // 若 API 腳本載入失敗
-  setTimeout(() => {
-    if (!playerReady) els.start.textContent = '無法載入 YouTube 播放器，請重新整理';
-  }, 15000);
+  /* ---------- 手機鎖定畫面／通知列顯示的資訊 ----------
+   * 作答中只顯示遊戲名稱與題號，揭曉後才顯示歌名。
+   */
+  function setMediaInfo(title, artist) {
+    if (!('mediaSession' in navigator) || typeof MediaMetadata !== 'function') return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title, artist, album: GAME_TITLE });
+    } catch { /* 不支援時忽略 */ }
+  }
 
-  function onPlayerError() {
-    // 影片無法播放（已刪除 / 禁止嵌入 / 地區限制）→ 換一首
-    if (round && (round.phase === 'loading' || round.phase === 'seeking')) replaceSong();
+  /* ---------- 音檔播放 ---------- */
+  // 播放並處理瀏覽器擋下自動播放的情況（手機上常見）
+  function playAudio(why) {
+    const p = audio.play();
+    if (p && p.catch) {
+      p.catch((err) => {
+        if (!round) return;
+        dbg.add('warn', `播放被瀏覽器擋下（${why}）：${err.name}`);
+        if (err.name === 'NotAllowedError') showUnstick('▶ 點我播放');
+      });
+    }
+  }
+
+  // 用媒體片段（#t=秒數）讓音檔直接從片段起點開始，不會先播出開頭
+  function loadSong(song) {
+    const url = round.previewUrl || song.preview;
+    audio.muted = true;
+    audio.src = `${url}#t=${round.snippetStart.toFixed(2)}`;
+    audio.load();
+    playAudio('載入');
+  }
+
+  ['loadstart', 'loadedmetadata', 'canplay', 'playing', 'waiting', 'stalled', 'pause', 'ended'].forEach((type) => {
+    audio.addEventListener(type, () => {
+      if (round && round.phase !== 'revealed') dbg.add('state', `audio ${type}（${audio.currentTime.toFixed(1)}s）`);
+    });
+  });
+
+  audio.addEventListener('loadedmetadata', () => {
+    if (!round) return;
+    // 依實際試聽長度修正片段起點，並確認真的跳到起點
+    const dur = audio.duration;
+    if (Number.isFinite(dur) && dur > 0) {
+      const maxStart = Math.max(0, dur - game.cfg.snippet - EDGE_OUT);
+      if (round.snippetStart > maxStart) round.snippetStart = maxStart;
+    }
+    if (Math.abs(audio.currentTime - round.snippetStart) > 0.5) audio.currentTime = round.snippetStart;
+  });
+
+  audio.addEventListener('error', () => {
+    if (!round || round.phase === 'skipping') return;
+    const code = audio.error && audio.error.code;
+    const reason = `音檔錯誤 ${code}：${MEDIA_ERROR[code] || '未知錯誤'}`;
+    dbg.add('error', `${songLabel(round.song)} ${reason}`);
+    if (round.phase === 'loading') {
+      if (round.attempt < MAX_ATTEMPTS) retrySong(reason);
+      else failSong(reason);
+    } else if (round.phase === 'answering') {
+      showUnstick('▶ 播放出錯，點我重試');
+    }
+  });
+
+  /* ---------- 重新取得試聽網址 ----------
+   * Apple 偶爾會更換試聽檔案網址；用 trackId 向 iTunes Lookup API 查詢最新網址（JSONP，不受 CORS 限制）。
+   */
+  function lookupPreview(id) {
+    return new Promise((resolve, reject) => {
+      const cb = `itunesCb${Date.now()}`;
+      const s = document.createElement('script');
+      const timer = setTimeout(() => { cleanup(); reject(new Error('查詢逾時')); }, 6000);
+      function cleanup() { clearTimeout(timer); delete window[cb]; s.remove(); }
+      window[cb] = (data) => {
+        cleanup();
+        const r = data && data.results && data.results[0];
+        if (r && r.previewUrl) resolve(r.previewUrl); else reject(new Error('Apple 已沒有這首歌的試聽'));
+      };
+      s.onerror = () => { cleanup(); reject(new Error('無法連到 iTunes')); };
+      s.src = `https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}&country=US&callback=${cb}`;
+      document.head.appendChild(s);
+    });
+  }
+
+  /* ---------- 載入失敗處理 ----------
+   * 載入中：3 秒沒開始播 → 自動再按一次播放；5 秒 → 顯示「點我播放」按鈕（手機常需要使用者手勢）；
+   * 12 秒或音檔錯誤 → 向 Apple 重新取得試聽網址後再載一次；再失敗 → 記錄原因並換下一首。
+   * 作答中：播放進度停住 1.5 秒 → 自動重新播放並暫停作答倒數；3 秒 → 顯示「點我播放」按鈕。
+   */
+  function watchLoading(waited) {
+    if (!round.nudged && waited > NUDGE_MS && audio.readyState < 3) {
+      round.nudged = true;
+      dbg.add('warn', `${Math.round(waited / 1000)} 秒仍未開始播放（readyState ${audio.readyState}），自動重新播放`);
+      playAudio('自動重試');
+    }
+    if (!round.helpShown && waited > HELP_MS) {
+      round.helpShown = true;
+      els.status.textContent = '音樂載入較慢…';
+      if (els.unstick.hidden) showUnstick('▶ 等太久？點我播放');
+    }
+    if (waited > LOAD_TIMEOUT_MS) {
+      const reason = `載入逾時（${Math.round(waited / 1000)} 秒，readyState ${audio.readyState}）`;
+      if (round.attempt < MAX_ATTEMPTS) retrySong(reason);
+      else failSong(reason);
+    }
+  }
+
+  async function retrySong(reason) {
+    const r = round;
+    r.attempt += 1;
+    r.phase = 'loading';
+    r.retrying = true;
+    dbg.add('warn', `${songLabel(r.song)} ${reason}，第 ${r.attempt} 次載入`);
+    hideUnstick();
+    els.status.textContent = '重新載入中…';
+    try {
+      r.previewUrl = await lookupPreview(r.song.appleId);
+      dbg.add('info', `已向 Apple 重新取得試聽網址${r.previewUrl === r.song.preview ? '（與原本相同）' : '（網址已更新）'}`);
+    } catch (e) {
+      dbg.add('warn', `重新取得試聽網址失敗：${e.message}，改用原本網址`);
+    }
+    if (round !== r || r.phase !== 'loading') return;
+    Object.assign(r, { loadStartedAt: performance.now(), nudged: false, helpShown: false, retrying: false, seekAt: 0, seekTries: 0 });
+    loadSong(r.song);
+  }
+
+  function failSong(reason) {
+    const song = round.song;
+    dbg.add('error', `${songLabel(song)} 無法播放，換下一首（${reason}）`);
+    recordFailure(song, reason);
+    round.phase = 'skipping';
+    game.skipped += 1;
+    game.failStreak += 1;
+    hideUnstick();
+    audio.pause();
+    els.status.textContent = '這首播不出來，換下一首…';
+    setTimeout(() => { if (round && round.song === song && round.phase === 'skipping') replaceSong(); }, 900);
+  }
+
+  function showUnstick(text) {
+    els.unstick.textContent = text;
+    els.unstick.hidden = false;
+  }
+  function hideUnstick() { els.unstick.hidden = true; }
+
+  // 使用者點按鈕 = 真正的手勢，瀏覽器一定允許有聲播放
+  function unstick() {
+    if (!round) return;
+    dbg.add('info', `使用者手動播放（${round.phase}，readyState ${audio.readyState}，${audio.paused ? '暫停' : '播放中'}）`);
+    hideUnstick();
+    if (round.phase === 'answering') {
+      audio.muted = false;
+      if (!round.snippetPlaying) audio.currentTime = round.snippetStart;
+      round.snippetPlaying = true;
+      round.lastProgressAt = performance.now();
+    } else if (audio.error) {
+      // 音檔已經出錯，直接重新載入
+      loadSong(round.song);
+      return;
+    }
+    playAudio('手動');
+  }
+
+  // 失敗紀錄存在瀏覽器裡，方便從診斷面板看出是哪幾首常出問題
+  function recordFailure(song, reason) {
+    const all = storage.get(FAIL_KEY) || {};
+    const key = String(song.appleId);
+    const f = all[key] || { count: 0 };
+    all[key] = { count: f.count + 1, reason, at: new Date().toISOString() };
+    storage.set(FAIL_KEY, all);
   }
 
   /* ---------- 遊戲流程 ---------- */
   function newGame() {
     let queue, total;
     if (challenge) {
-      // 挑戰模式：同一組題目、同樣順序；後面接備用歌，萬一有影片無法播放時遞補
+      // 挑戰模式：同一組題目、同樣順序；後面接備用歌，萬一有歌無法播放時遞補
       settings.difficulty = challenge.d;
       queue = [...challenge.songs, ...shuffle(SONGS.filter((s) => !challenge.songs.includes(s)))];
       total = challenge.songs.length;
@@ -201,17 +384,31 @@
       queue,           // 尚未出題的歌
       index: 0,
       score: 0, streak: 0, bestStreak: 0, correct: 0,
+      skipped: 0, failStreak: 0,
       history: [],
     };
+    dbg.add('info', `新遊戲：${DIFF_LABEL[settings.difficulty]}、${total} 題${challenge ? '（挑戰模式）' : ''}`);
     showScreen('game');
     startRound();
   }
 
   function makeOptions(song) {
-    const others = shuffle(SONGS.filter((s) => s.en !== song.en)).slice(0, 3);
+    const others = [];
+    for (const s of shuffle(SONGS)) {
+      // 同一部作品的其他歌不能當干擾選項，干擾選項彼此也不重複
+      if (s.en === song.en || others.some((o) => o.en === s.en)) continue;
+      others.push(s);
+      if (others.length === 3) break;
+    }
     return shuffle([song, ...others]);
   }
 
+  function pickStart(snippet) {
+    // 試聽通常是副歌附近的 30 秒；在避開淡入淡出的範圍內隨機取片段
+    return rand(EDGE_IN, Math.max(EDGE_IN, PREVIEW_LEN - snippet - EDGE_OUT));
+  }
+
+  // 必須在使用者點擊（開始遊戲／下一題）的同一個事件裡呼叫，手機才允許播放
   function startRound(song = game.queue.shift()) {
     if (!song) return endGame();
     round = {
@@ -219,27 +416,37 @@
       options: makeOptions(song),
       phase: 'loading',
       loadStartedAt: performance.now(),
-      snippetStart: 0,
+      snippetStart: pickStart(game.cfg.snippet),
       snippetPlaying: false,
       answerStartedAt: 0,
-      answered: false,
+      attempt: 1,          // 第幾次載入這首
+      previewUrl: null,    // 重新查詢到的試聽網址
+      nudged: false,       // 是否已自動重按播放
+      helpShown: false,    // 是否已顯示「點我播放」
+      lastT: 0, lastProgressAt: 0, lastTickAt: 0,
+      stalled: false, stallStart: 0,
+      seekAt: 0, seekTries: 0,
     };
+    dbg.add('info', `第 ${game.index + 1} 題：${songLabel(song)}，片段從 ${round.snippetStart.toFixed(1)} 秒開始`);
 
     els.round.textContent = `${game.index + 1} / ${game.total}`;
     els.streak.textContent = game.streak;
     els.score.textContent = game.score;
     els.labelDisc.textContent = '?';
     els.vinyl.classList.remove('spin');
-    els.status.textContent = '載入音樂中…';
+    els.status.textContent = game.failStreak >= 3
+      ? `載入音樂中…（已連續 ${game.failStreak} 首播不出來，請檢查網路連線）`
+      : '載入音樂中…';
+    hideUnstick();
     els.snippetFill.style.width = '0%';
     els.timerFill.style.transform = 'scaleX(1)';
     els.timerFill.classList.remove('warn');
     els.replay.disabled = true;
     els.reveal.hidden = true;
     renderOptions(true);
+    setMediaInfo(GAME_TITLE, `第 ${game.index + 1} 題`);
 
-    player.mute();
-    player.loadVideoById({ videoId: song.youtubeId });
+    loadSong(song);
     startTicker();
   }
 
@@ -251,6 +458,11 @@
       return endGame();
     }
     startRound(next);
+  }
+
+  function preloadNext() {
+    const next = game.queue[0];
+    if (next && game.index + 1 < game.total) preloader.src = next.preview;
   }
 
   function renderOptions(disabled) {
@@ -275,62 +487,87 @@
   }
 
   function tick() {
-    if (!round || !player) return;
-    const state = player.getPlayerState();
+    if (!round) return;
     const now = performance.now();
 
     if (round.phase === 'loading') {
-      if (state === YT.PlayerState.PLAYING) {
-        // 影片開始了（靜音），決定片段起點後跳過去
-        const dur = player.getDuration() || 0;
-        const { snippet, startMin, startMax, hotIndex } = game.cfg;
-        const hot = round.song.hot && round.song.hot[hotIndex];
-        let start = 0;
-        if (typeof hot === 'number') {
-          // 使用 YouTube「重播次數最多」熱度最高的段落
-          start = dur ? clamp(hot, 0, Math.max(0, dur - snippet - 1)) : hot;
-        } else if (dur > snippet + 6) {
-          // 沒有熱度資料的影片：退回隨機段落
-          start = rand(dur * startMin, dur * startMax);
-          start = clamp(start, 3, dur - snippet - 3);
-        }
-        round.snippetStart = start;
-        round.phase = 'seeking';
-        try { player.unloadModule('captions'); } catch { /* 沒有字幕模組時忽略 */ }
-        player.seekTo(start, true);
-      } else if (now - round.loadStartedAt > LOAD_TIMEOUT_MS) {
-        replaceSong();
-      }
-      return;
-    }
-
-    if (round.phase === 'seeking') {
-      const t = player.getCurrentTime();
-      if (state === YT.PlayerState.PLAYING && Math.abs(t - round.snippetStart) < 1.5) {
+      if (round.retrying) return;
+      const t = audio.currentTime;
+      // 真的在片段起點附近播放了，才取消靜音開始作答
+      if (!audio.paused && audio.readyState >= 3 && t >= round.snippetStart - 0.3 && t < round.snippetStart + 2) {
         round.snippetStart = t;
-        player.unMute();
-        player.setVolume(100);
+        audio.muted = false;
         round.phase = 'answering';
         round.snippetPlaying = true;
         round.answerStartedAt = now;
+        round.lastT = t;
+        round.lastProgressAt = now;
+        round.lastTickAt = now;
+        game.failStreak = 0;
+        hideUnstick();
+        dbg.add('info', `片段開始，載入花了 ${((now - round.loadStartedAt) / 1000).toFixed(1)} 秒`);
         els.vinyl.classList.add('spin');
         els.status.textContent = '仔細聽…';
         els.replay.disabled = false;
         renderOptions(false);
-      } else if (now - round.loadStartedAt > LOAD_TIMEOUT_MS) {
-        replaceSong();
+        preloadNext();
+      } else {
+        if (!audio.paused && !audio.seeking && audio.readyState >= 1 &&
+            Math.abs(t - round.snippetStart) > 2 && now - round.seekAt > 2000) {
+          // 瀏覽器沒有照 #t= 起點播放，手動跳過去（每 2 秒最多一次，避免一直重跳）
+          round.seekAt = now;
+          round.seekTries += 1;
+          dbg.add('warn', `沒有從片段起點播放（目前 ${t.toFixed(1)} 秒），第 ${round.seekTries} 次手動跳到 ${round.snippetStart.toFixed(1)} 秒`);
+          if (round.seekTries > 2) {
+            // 伺服器不支援跳轉時，改從目前位置開始當作片段
+            dbg.add('warn', '無法跳轉，改從目前位置開始');
+            round.snippetStart = t;
+          } else {
+            audio.currentTime = round.snippetStart;
+          }
+        }
+        watchLoading(now - round.loadStartedAt);
       }
       return;
     }
 
     if (round.phase === 'answering') {
+      const dt = now - round.lastTickAt;
+      round.lastTickAt = now;
+
+      if (round.snippetPlaying) {
+        const t = audio.currentTime;
+        if (t > round.lastT + 0.05) {
+          round.lastT = t;
+          round.lastProgressAt = now;
+          if (round.stalled) {
+            round.stalled = false;
+            dbg.add('info', `恢復播放（卡了 ${((now - round.stallStart) / 1000).toFixed(1)} 秒）`);
+            hideUnstick();
+            els.vinyl.classList.add('spin');
+            els.status.textContent = '仔細聽…';
+          }
+        } else if (now - round.lastProgressAt > STALL_MS) {
+          if (!round.stalled) {
+            round.stalled = true;
+            round.stallStart = now;
+            dbg.add('warn', `播放卡住（${audio.paused ? '暫停' : '緩衝'}，${t.toFixed(1)} 秒），自動重新播放`);
+            els.vinyl.classList.remove('spin');
+            els.status.textContent = '緩衝中…（作答倒數暫停）';
+            playAudio('卡住');
+          } else if (now - round.stallStart > STALL_HELP_MS && els.unstick.hidden) {
+            showUnstick('▶ 沒聲音？點我播放');
+          }
+          // 卡住時作答倒數暫停
+          round.answerStartedAt += dt;
+        }
+      }
       // 片段進度
       if (round.snippetPlaying) {
-        const elapsed = player.getCurrentTime() - round.snippetStart;
-        const ratio = clamp(elapsed / game.cfg.snippet, 0, 1);
+        const ratio = clamp((audio.currentTime - round.snippetStart) / game.cfg.snippet, 0, 1);
         els.snippetFill.style.width = `${ratio * 100}%`;
-        if (ratio >= 1) {
-          player.pauseVideo();
+        if (ratio >= 1 || audio.ended) {
+          audio.pause();
           round.snippetPlaying = false;
           els.vinyl.classList.remove('spin');
           els.status.textContent = '片段結束，可以再聽一次';
@@ -341,14 +578,23 @@
       els.timerFill.style.transform = `scaleX(${clamp(left, 0, 1)})`;
       els.timerFill.classList.toggle('warn', left < 0.3);
       if (left <= 0) answer(null);
+      return;
+    }
+
+    if (round.phase === 'revealed' && audio.ended) {
+      els.vinyl.classList.remove('spin');
+      els.status.textContent = '試聽結束';
     }
   }
 
   function replay() {
     if (!round || round.phase !== 'answering') return;
-    player.seekTo(round.snippetStart, true);
-    player.playVideo();
+    audio.currentTime = round.snippetStart;
+    audio.muted = false;
+    playAudio('再聽一次');
     round.snippetPlaying = true;
+    round.lastT = round.snippetStart;
+    round.lastProgressAt = performance.now();
     els.vinyl.classList.add('spin');
     els.status.textContent = '仔細聽…';
   }
@@ -380,22 +626,27 @@
       else b.classList.add('dim');
     });
 
-    // 揭曉：影片始終被封面遮住，只從片段起點繼續播放聲音
+    // 揭曉：從片段起點繼續播放到試聽結束
+    hideUnstick();
     els.replay.disabled = true;
     els.labelDisc.textContent = ok ? '✓' : '✗';
     els.vinyl.classList.add('spin');
-    els.status.textContent = '♪ 繼續欣賞這首曲子';
+    els.status.textContent = '♪ 繼續欣賞這首歌';
     els.snippetFill.style.width = '100%';
-    player.seekTo(round.snippetStart, true);
-    player.playVideo();
-    els.ytLink.href = `https://www.youtube.com/watch?v=${song.youtubeId}`;
+    audio.currentTime = round.snippetStart;
+    audio.muted = false;
+    playAudio('揭曉');
+    setMediaInfo(song.track, `${song.composer}（${song.zh}）`);
+    els.appleLink.href = song.appleUrl;
+    els.ytLink.hidden = !song.youtubeId;
+    if (song.youtubeId) els.ytLink.href = `https://www.youtube.com/watch?v=${song.youtubeId}`;
 
     els.verdict.className = `verdict ${ok ? 'ok' : 'no'}`;
     els.verdict.textContent = ok
       ? `答對了！+${gained}${game.streak > 1 ? `（${game.streak} 連擊）` : ''}`
       : choice ? '答錯了！' : '時間到！';
-    els.revealTitle.textContent = `《${song.zh}》${song.en}（${song.year}）`;
-    els.revealMeta.textContent = `${song.track} — ${song.composer}`;
+    els.revealTitle.textContent = `《${song.zh}》${song.en === song.zh ? '' : song.en}（${song.year}）`;
+    els.revealMeta.textContent = `${TYPE_LABEL[song.type] || ''}「${song.track}」— ${song.composer}`;
     els.next.textContent = game.index + 1 >= game.total ? '看結果 →' : '下一題 →';
     els.reveal.hidden = false;
     els.streak.textContent = game.streak;
@@ -412,8 +663,11 @@
 
   function endGame() {
     clearInterval(ticker);
-    if (player && playerReady) player.stopVideo();
+    audio.pause();
     round = null;
+    hideUnstick();
+    setMediaInfo(GAME_TITLE, '');
+    dbg.add('info', `遊戲結束：${game.score} 分，跳過 ${game.skipped} 首無法播放的歌`);
 
     const total = game.history.length;
     els.finalScore.textContent = game.score;
@@ -431,10 +685,10 @@
     game.history.forEach(({ song, ok, gained }) => {
       const li = document.createElement('li');
       li.innerHTML = `<span class="mark ${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'}</span>
-        <span><b></b><small></small></span><a target="_blank" rel="noopener">YouTube ↗</a>`;
+        <span><b></b><small></small></span><a target="_blank" rel="noopener">Apple Music ↗</a>`;
       li.querySelector('b').textContent = `《${song.zh}》${ok ? ` +${gained}` : ''}`;
-      li.querySelector('small').textContent = `${song.track} — ${song.composer}`;
-      li.querySelector('a').href = `https://www.youtube.com/watch?v=${song.youtubeId}`;
+      li.querySelector('small').textContent = `${TYPE_LABEL[song.type] || ''}「${song.track}」— ${song.composer}`;
+      li.querySelector('a').href = song.appleUrl;
       els.credits.appendChild(li);
     });
 
@@ -563,8 +817,81 @@
     }
   }
 
+  /* ---------- 診斷面板 ---------- */
+  let debugTimer = null;
+
+  function debugInfoLines() {
+    const lines = [
+      `網址：${location.href}`,
+      `瀏覽器：${navigator.userAgent}`,
+      `網路：${navigator.onLine ? '連線中' : '離線'}　頁面：${document.hidden ? '背景' : '前景'}`,
+    ];
+    if (game) lines.push(`本局：第 ${game.index + 1} / ${game.total} 題，已跳過 ${game.skipped} 首，連續失敗 ${game.failStreak} 首`);
+    if (round) {
+      lines.push(
+        `目前歌曲：${songLabel(round.song)}`,
+        `階段：${round.phase}　載入次數：${round.attempt}`,
+        `音檔：readyState ${audio.readyState}　networkState ${audio.networkState}　${audio.paused ? '暫停' : '播放中'}　${audio.muted ? '靜音' : '有聲'}`,
+        `時間：${audio.currentTime.toFixed(1)} / ${Number.isFinite(audio.duration) ? audio.duration.toFixed(1) : '?'} 秒　片段起點：${round.snippetStart.toFixed(1)} 秒`,
+        `錯誤：${audio.error ? `${audio.error.code} ${MEDIA_ERROR[audio.error.code] || ''}` : '無'}`,
+        `網址：${audio.currentSrc || audio.src}`,
+      );
+    }
+    return lines;
+  }
+
+  function failedLines() {
+    const all = storage.get(FAIL_KEY) || {};
+    return Object.entries(all)
+      .sort((a, b) => b[1].count - a[1].count)
+      .map(([id, f]) => {
+        const s = SONGS.find((x) => String(x.appleId) === id);
+        return `${s ? songLabel(s) : id}　失敗 ${f.count} 次，最後原因：${f.reason}`;
+      });
+  }
+
+  function renderDebug() {
+    els.debugInfo.textContent = debugInfoLines().join('\n');
+    const failed = failedLines();
+    els.debugFailed.textContent = failed.length ? failed.join('\n') : '（沒有記錄）';
+    els.debugLog.textContent = dbg.entries.slice().reverse()
+      .map((e) => `${e.sec.padStart(6)}s ${{ error: '❌', warn: '⚠️', state: '·', info: 'ℹ️' }[e.level] || ''} ${e.msg}`)
+      .join('\n') || '（尚無記錄）';
+    els.debugRetry.disabled = !(round && ['loading', 'answering'].includes(round.phase));
+    els.debugSkip.disabled = !(round && round.phase === 'loading');
+  }
+
+  function openDebug() {
+    debugOpen = true;
+    els.debugMsg.textContent = '';
+    els.debugModal.hidden = false;
+    renderDebug();
+    clearInterval(debugTimer);
+    debugTimer = setInterval(renderDebug, 1000);
+  }
+
+  function closeDebug() {
+    debugOpen = false;
+    els.debugModal.hidden = true;
+    clearInterval(debugTimer);
+  }
+
+  async function copyDebug() {
+    const text = [
+      `【${GAME_TITLE} 診斷資訊】${new Date().toLocaleString()}`,
+      ...debugInfoLines(), '', '— 失敗過的歌 —', ...failedLines(), '',
+      '— 事件記錄 —', ...dbg.entries.map((e) => `${e.sec}s [${e.level}] ${e.msg}`),
+    ].join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      els.debugMsg.textContent = '✅ 已複製，貼給開發者即可';
+    } catch {
+      els.debugMsg.textContent = '無法自動複製，請手動選取上方文字';
+    }
+  }
+
   /* ---------- 事件 ---------- */
-  els.start.addEventListener('click', () => { if (playerReady) newGame(); });
+  els.start.addEventListener('click', newGame);
   els.again.addEventListener('click', () => {
     if (challenge) leaveChallenge(); else renderBest();
     showScreen('start');
@@ -580,10 +907,36 @@
   els.name.addEventListener('change', () => storage.set(NAME_KEY, els.name.value.trim()));
   els.replay.addEventListener('click', replay);
   els.next.addEventListener('click', nextRound);
+  els.unstick.addEventListener('click', unstick);
+
+  els.debugOpen.addEventListener('click', openDebug);
+  els.debugClose.addEventListener('click', closeDebug);
+  els.debugModal.addEventListener('click', (e) => { if (e.target === els.debugModal) closeDebug(); });
+  els.debugCopy.addEventListener('click', copyDebug);
+  els.debugRetry.addEventListener('click', () => {
+    if (!round || !['loading', 'answering'].includes(round.phase)) return;
+    round.attempt = Math.min(round.attempt, MAX_ATTEMPTS - 1);
+    if (round.phase === 'answering') {
+      round.snippetPlaying = false;
+      renderOptions(true);
+      els.replay.disabled = true;
+    }
+    retrySong('使用者要求重新載入');
+    closeDebug();
+  });
+  els.debugSkip.addEventListener('click', () => {
+    if (round && round.phase === 'loading') { failSong('使用者跳過'); closeDebug(); }
+  });
+  els.debugClear.addEventListener('click', () => { storage.set(FAIL_KEY, {}); renderDebug(); });
+  window.addEventListener('online', () => dbg.add('info', '網路已連線'));
+  window.addEventListener('offline', () => dbg.add('error', '網路已中斷'));
+  document.addEventListener('visibilitychange', () => dbg.add('info', `頁面${document.hidden ? '切到背景' : '回到前景'}`));
+  if (new URLSearchParams(location.search).has('debug')) openDebug();
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !els.modal.hidden) return closeShare();
-    if (!round) return;
+    if (e.key === 'Escape' && debugOpen) return closeDebug();
+    if (debugOpen || !round) return;
     if (round.phase === 'answering' && /^[1-4]$/.test(e.key)) {
       answer(round.options[Number(e.key) - 1]);
     } else if (round.phase === 'answering' && (e.key === 'r' || e.key === 'R')) {
