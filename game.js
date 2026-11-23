@@ -10,8 +10,11 @@
     normal: { snippet: 10, hotIndex: 1, startMin: 0.10, startMax: 0.50, answerTime: 25 },
     hard:   { snippet: 5,  hotIndex: 0, startMin: 0.10, startMax: 0.75, answerTime: 20 },
   };
+  const DIFF_LABEL = { easy: '簡單', normal: '普通', hard: '困難' };
   const LOAD_TIMEOUT_MS = 12000;
   const BEST_KEY = 'hollywood-guess-best';
+  const NAME_KEY = 'hollywood-guess-name';
+  const GAME_TITLE = '好萊塢配樂猜猜看';
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -24,6 +27,12 @@
     next: $('btn-next'),
     finalScore: $('final-score'), finalCorrect: $('final-correct'), finalStreak: $('final-streak'),
     rank: $('final-rank'), credits: $('credits'), again: $('btn-again'),
+    settingsBox: $('settings'), challengeBanner: $('challenge-banner'), challengeText: $('challenge-text'),
+    exitChallenge: $('btn-exit-challenge'), challengeResult: $('challenge-result'),
+    name: $('player-name'), shareImgBtn: $('btn-share-img'), invite: $('btn-invite'),
+    inviteMsg: $('invite-msg'), inviteLink: $('invite-link'),
+    modal: $('share-modal'), closeShare: $('btn-close-share'), shareImg: $('share-img'),
+    shareIg: $('btn-share-ig'), download: $('btn-download'), shareHint: $('share-hint'),
   };
 
   const settings = { difficulty: 'normal', rounds: 10, pool: 'all' };
@@ -57,9 +66,78 @@
 
   function renderBest() {
     const best = storage.get(BEST_KEY) || {};
-    const label = { easy: '簡單', normal: '普通', hard: '困難' }[settings.difficulty];
     const b = best[settings.difficulty];
-    els.best.textContent = b ? `${label}模式最高分：${b}` : '';
+    els.best.textContent = b ? `${DIFF_LABEL[settings.difficulty]}模式最高分：${b}` : '';
+  }
+
+  /* ---------- 挑戰連結 ----------
+   * 格式：?d=normal&q=3.17.45&s=1230&c=7&n=名字
+   * q 是 SONGS 的索引（songs.js 只能往後新增，才不會讓舊連結對到別首歌）
+   */
+  function parseChallenge() {
+    const p = new URLSearchParams(location.search);
+    if (!p.has('q')) return null;
+    const d = p.get('d');
+    if (!DIFFICULTY[d]) return null;
+    const q = p.get('q').split('.').map(Number);
+    const valid = q.length >= 1 && q.length <= 20 && new Set(q).size === q.length &&
+      q.every((i) => Number.isInteger(i) && i >= 0 && i < SONGS.length);
+    if (!valid) return null;
+    return {
+      d,
+      songs: q.map((i) => SONGS[i]),
+      score: Math.max(0, parseInt(p.get('s'), 10) || 0),
+      correct: clamp(parseInt(p.get('c'), 10) || 0, 0, q.length),
+      name: (p.get('n') || '').trim().slice(0, 16),
+    };
+  }
+
+  function buildInviteUrl() {
+    const p = new URLSearchParams();
+    p.set('d', settings.difficulty);
+    p.set('q', game.history.map((h) => SONGS.indexOf(h.song)).join('.'));
+    p.set('s', game.score);
+    p.set('c', game.correct);
+    const name = els.name.value.trim();
+    if (name) p.set('n', name);
+    return `${location.origin}${location.pathname}?${p}`;
+  }
+
+  let challenge = parseChallenge();
+
+  function startLabel() {
+    if (!playerReady) return;
+    els.start.textContent = challenge ? '接受挑戰' : '開始遊戲';
+  }
+
+  function renderChallenge() {
+    els.challengeBanner.hidden = !challenge;
+    els.settingsBox.hidden = !!challenge;
+    if (challenge) {
+      settings.difficulty = challenge.d;
+      const t = els.challengeText;
+      t.textContent = '';
+      const who = document.createElement('b');
+      who.textContent = challenge.name || '你的朋友';
+      const score = document.createElement('b');
+      score.textContent = `${challenge.score} 分`;
+      t.append(who, ' 邀請你挑戰！', document.createElement('br'),
+        `在${DIFF_LABEL[challenge.d]}模式 ${challenge.songs.length} 題中拿下 `, score,
+        `（答對 ${challenge.correct} 題）。用同一組題目比比看！`);
+    }
+    startLabel();
+    renderBest();
+  }
+
+  function leaveChallenge() {
+    challenge = null;
+    history.replaceState(null, '', location.pathname);
+    // 還原設定按鈕的選取狀態
+    document.querySelectorAll('.seg').forEach((seg) => {
+      const key = seg.dataset.setting;
+      seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', String(settings[key]) === b.dataset.value));
+    });
+    renderChallenge();
   }
 
   /* ---------- 設定 ---------- */
@@ -73,7 +151,8 @@
       renderBest();
     });
   });
-  renderBest();
+  renderChallenge();
+  els.name.value = storage.get(NAME_KEY) || '';
 
   /* ---------- YouTube 播放器 ---------- */
   window.onYouTubeIframeAPIReady = () => {
@@ -88,7 +167,7 @@
           iframe.tabIndex = -1;
           iframe.setAttribute('aria-hidden', 'true');
           els.start.disabled = false;
-          els.start.textContent = '開始遊戲';
+          startLabel();
         },
         onError: onPlayerError,
       },
@@ -106,11 +185,19 @@
 
   /* ---------- 遊戲流程 ---------- */
   function newGame() {
-    const pool = SONGS.filter((s) => settings.pool === 'all' || s.type === settings.pool);
-    const queue = shuffle(pool);
+    let queue, total;
+    if (challenge) {
+      // 挑戰模式：同一組題目、同樣順序；後面接備用歌，萬一有影片無法播放時遞補
+      settings.difficulty = challenge.d;
+      queue = [...challenge.songs, ...shuffle(SONGS.filter((s) => !challenge.songs.includes(s)))];
+      total = challenge.songs.length;
+    } else {
+      queue = shuffle(SONGS.filter((s) => settings.pool === 'all' || s.type === settings.pool));
+      total = Math.min(settings.rounds, queue.length);
+    }
     game = {
       cfg: DIFFICULTY[settings.difficulty],
-      total: Math.min(settings.rounds, queue.length),
+      total,
       queue,           // 尚未出題的歌
       index: 0,
       score: 0, streak: 0, bestStreak: 0, correct: 0,
@@ -357,16 +444,145 @@
       storage.set(BEST_KEY, best);
       if (game.score > 0) els.rank.textContent += '　✨ 新紀錄！';
     }
+
+    // 挑戰結果
+    els.challengeResult.hidden = !challenge;
+    if (challenge) {
+      const rival = challenge.name || '朋友';
+      const diff = game.score - challenge.score;
+      els.challengeResult.textContent =
+        diff > 0 ? `🎉 你贏了 ${rival}！（${game.score} vs ${challenge.score}）` :
+        diff < 0 ? `😤 差 ${-diff} 分輸給 ${rival}（${game.score} vs ${challenge.score}）` :
+        `🤝 和 ${rival} 平手！（${game.score} 分）`;
+    }
+
+    els.inviteMsg.textContent = '';
+    els.inviteLink.hidden = true;
     showScreen('end');
+  }
+
+  /* ---------- 分享成績圖 ---------- */
+  let shareBlob = null;
+  let shareUrl = null;
+
+  function shareFileName() {
+    return `hollywood-score-${game.score}.png`;
+  }
+
+  async function openShare() {
+    if (!game) return;
+    storage.set(NAME_KEY, els.name.value.trim());
+    els.modal.hidden = false;
+    els.shareImg.removeAttribute('src');
+    els.shareIg.disabled = true;
+    els.download.disabled = true;
+    els.shareHint.textContent = '產生圖片中…';
+    try {
+      shareBlob = await window.ShareImage.drawScoreImage({
+        name: els.name.value.trim(),
+        score: game.score,
+        correct: game.correct,
+        total: game.history.length,
+        bestStreak: game.bestStreak,
+        difficultyLabel: DIFF_LABEL[settings.difficulty],
+        rank: els.rank.textContent.replace('　✨ 新紀錄！', ''),
+        history: game.history,
+        inviteUrl: buildInviteUrl(),
+        displayUrl: (location.host + location.pathname).replace(/\/$/, ''),
+      });
+    } catch {
+      els.shareHint.textContent = '圖片產生失敗，請再試一次。';
+      return;
+    }
+    if (shareUrl) URL.revokeObjectURL(shareUrl);
+    shareUrl = URL.createObjectURL(shareBlob);
+    els.shareImg.src = shareUrl;
+
+    const file = new File([shareBlob], shareFileName(), { type: 'image/png' });
+    const canShareFile = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+    els.shareIg.hidden = !canShareFile;
+    els.shareIg.disabled = false;
+    els.download.disabled = false;
+    els.shareHint.textContent = canShareFile
+      ? '點「分享到 IG」後選 Instagram → 限時動態；也可以先下載圖片。'
+      : '下載圖片後，到 IG 新增限時動態並選擇這張圖片即可分享。';
+  }
+
+  function closeShare() {
+    els.modal.hidden = true;
+  }
+
+  function downloadImage() {
+    if (!shareUrl) return;
+    const a = document.createElement('a');
+    a.href = shareUrl;
+    a.download = shareFileName();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    els.shareHint.textContent = '已下載！到 IG 新增限時動態並選擇這張圖片即可分享。';
+  }
+
+  async function shareToIg() {
+    if (!shareBlob) return;
+    const file = new File([shareBlob], shareFileName(), { type: 'image/png' });
+    try {
+      await navigator.share({ files: [file] });
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // 使用者取消
+      downloadImage();
+    }
+  }
+
+  /* ---------- 邀請朋友 ---------- */
+  async function invite() {
+    if (!game) return;
+    const name = els.name.value.trim();
+    storage.set(NAME_KEY, name);
+    const url = buildInviteUrl();
+    const text = `${name || '我'}在「${GAME_TITLE}」${DIFF_LABEL[settings.difficulty]}模式拿了 ${game.score} 分（答對 ${game.correct}/${game.history.length}），用同一組題目來挑戰看看，你能贏過我嗎？🎬`;
+
+    els.inviteLink.value = url;
+    els.inviteLink.hidden = false;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: GAME_TITLE, text, url });
+        els.inviteMsg.textContent = '已送出邀請！';
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(`${text}\n${url}`);
+      els.inviteMsg.textContent = '✅ 已複製邀請訊息和連結，貼給朋友吧！';
+    } catch {
+      els.inviteMsg.textContent = '請複製下面的連結傳給朋友：';
+      els.inviteLink.select();
+    }
   }
 
   /* ---------- 事件 ---------- */
   els.start.addEventListener('click', () => { if (playerReady) newGame(); });
-  els.again.addEventListener('click', () => { renderBest(); showScreen('start'); });
+  els.again.addEventListener('click', () => {
+    if (challenge) leaveChallenge(); else renderBest();
+    showScreen('start');
+  });
+  els.exitChallenge.addEventListener('click', leaveChallenge);
+  els.shareImgBtn.addEventListener('click', openShare);
+  els.closeShare.addEventListener('click', closeShare);
+  els.modal.addEventListener('click', (e) => { if (e.target === els.modal) closeShare(); });
+  els.download.addEventListener('click', downloadImage);
+  els.shareIg.addEventListener('click', shareToIg);
+  els.invite.addEventListener('click', invite);
+  els.inviteLink.addEventListener('focus', () => els.inviteLink.select());
+  els.name.addEventListener('change', () => storage.set(NAME_KEY, els.name.value.trim()));
   els.replay.addEventListener('click', replay);
   els.next.addEventListener('click', nextRound);
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !els.modal.hidden) return closeShare();
     if (!round) return;
     if (round.phase === 'answering' && /^[1-4]$/.test(e.key)) {
       answer(round.options[Number(e.key) - 1]);

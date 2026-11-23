@@ -14,6 +14,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html, body { margin: 0; }
 
@@ -192,6 +193,68 @@ legend { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
 .credits .mark.no { color: var(--red); }
 .credits small { color: var(--muted); display: block; }
 .credits a { color: var(--gold); font-size: 12px; text-decoration: none; white-space: nowrap; }
+
+/* ---------- challenge / share ---------- */
+.challenge {
+  border: 1px solid var(--gold); background: rgba(230, 180, 76, .08);
+  border-radius: var(--radius); padding: 4px 16px 14px; margin-bottom: 24px; text-align: center;
+}
+.challenge .eyebrow { margin-top: 12px; }
+.challenge-text { margin: 0 0 8px; line-height: 1.6; }
+.btn-link {
+  background: none; border: 0; color: var(--muted); font: inherit; font-size: 13px;
+  text-decoration: underline; cursor: pointer; padding: 4px;
+}
+.challenge-result {
+  text-align: center; font-weight: 700; font-size: 18px; margin: -4px 0 16px;
+  padding: 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line);
+}
+
+.btn-secondary {
+  padding: 14px 12px; border-radius: 12px; cursor: pointer; font: inherit; font-weight: 700; font-size: 15px;
+  color: var(--text); background: var(--panel); border: 1px solid var(--gold);
+  transition: background .15s;
+}
+.btn-secondary:hover { background: rgba(230, 180, 76, .12); }
+
+.share-box {
+  padding: 16px; border-radius: var(--radius); margin-bottom: 20px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.name-field { display: grid; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+.name-field input, .invite-link {
+  width: 100%; padding: 10px 12px; border-radius: 10px; font: inherit; font-size: 16px;
+  color: var(--text); background: rgba(0, 0, 0, .3); border: 1px solid var(--line);
+}
+.name-field input:focus, .invite-link:focus { outline: none; border-color: var(--gold); }
+.share-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px; }
+.share-actions .btn-primary { font-size: 15px; padding: 14px 12px; }
+.hint { color: var(--muted); font-size: 13px; text-align: center; margin: 10px 0 0; min-height: 1em; }
+.invite-link { margin-top: 8px; font-size: 13px; }
+
+.modal {
+  position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .75);
+  display: grid; place-items: center; padding: 16px; animation: fade .2s ease;
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  position: relative; width: 100%; max-width: 420px; max-height: calc(100vh - 32px); overflow: auto;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px;
+}
+.modal-card h3 { margin: 0 0 12px; font-size: 18px; }
+.modal-close {
+  position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--panel); border: 1px solid var(--line); color: var(--text); cursor: pointer; font-size: 14px;
+}
+.share-preview {
+  display: grid; place-items: center; margin-bottom: 12px; min-height: 200px;
+  background: rgba(0, 0, 0, .3); border-radius: 10px; overflow: hidden;
+}
+.share-preview img { display: block; width: 100%; max-height: 58vh; object-fit: contain; }
+
+@media (max-width: 520px) {
+  .share-actions { grid-auto-flow: row; }
+}
 
 .foot { color: var(--muted); font-size: 12px; padding: 16px; text-align: center; opacity: .7; }
 

@@ -20,7 +20,13 @@
       <h1 class="title">好萊塢配樂<br><span>猜猜看</span></h1>
       <p class="subtitle">聽一段電影配樂，猜出是哪一部電影。</p>
 
-      <div class="settings">
+      <div class="challenge" id="challenge-banner" hidden>
+        <p class="eyebrow">CHALLENGE</p>
+        <p class="challenge-text" id="challenge-text"></p>
+        <button id="btn-exit-challenge" class="btn-link" type="button">改玩一般模式</button>
+      </div>
+
+      <div class="settings" id="settings">
         <fieldset>
           <legend>難度</legend>
           <div class="seg" data-setting="difficulty">
@@ -97,14 +103,45 @@
         <div><span class="label">最長連擊</span><strong id="final-streak">0</strong></div>
       </div>
       <p class="rank" id="final-rank"></p>
+      <p class="challenge-result" id="challenge-result" hidden></p>
+
+      <div class="share-box">
+        <label class="name-field">
+          <span>你的名字（選填，會顯示在分享圖和邀請中）</span>
+          <input id="player-name" type="text" maxlength="16" placeholder="例如：電影迷小明" autocomplete="nickname">
+        </label>
+        <div class="share-actions">
+          <button id="btn-share-img" class="btn-secondary" type="button">📸 分享成績圖到 IG</button>
+          <button id="btn-invite" class="btn-secondary" type="button">🎯 邀請朋友挑戰</button>
+        </div>
+        <p class="hint" id="invite-msg" aria-live="polite"></p>
+        <input class="invite-link" id="invite-link" type="text" readonly hidden>
+      </div>
+
       <ol class="credits" id="credits"></ol>
       <button id="btn-again" class="btn-primary" type="button">再玩一次</button>
     </section>
   </main>
 
+  <!-- ===== 分享成績圖 ===== -->
+  <div class="modal" id="share-modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <button class="modal-close" id="btn-close-share" type="button" aria-label="關閉">✕</button>
+      <h3 id="share-title">分享成績</h3>
+      <div class="share-preview"><img id="share-img" alt="成績分享圖"></div>
+      <div class="share-actions">
+        <button id="btn-share-ig" class="btn-primary" type="button">分享到 IG</button>
+        <button id="btn-download" class="btn-secondary" type="button">⬇ 下載圖片</button>
+      </div>
+      <p class="hint" id="share-hint">手機可直接分享到 IG 限時動態；電腦請先下載圖片再上傳到 IG。</p>
+    </div>
+  </div>
+
   <footer class="foot">音樂與影片來源：YouTube。所有配樂版權屬原權利人所有，本遊戲僅供娛樂。</footer>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
   <script src="songs.js"></script>
+  <script src="share.js"></script>
   <script src="game.js"></script>
   <script src="https://www.youtube.com/iframe_api"></script>
 </body>
